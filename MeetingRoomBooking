@@ -1,0 +1,274 @@
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+
+class Booking {
+    String id;
+    String roomName;
+    String date;
+    LocalTime startTime;
+    LocalTime endTime;
+    int attendees;
+    String purpose;
+    boolean isAdmin;
+
+    public Booking(String id, String roomName, String date, LocalTime startTime, LocalTime endTime, int attendees,
+            String purpose, boolean isAdmin) {
+        this.id = id;
+        this.roomName = roomName;
+        this.date = date;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.attendees = attendees;
+        this.purpose = purpose;
+        this.isAdmin = isAdmin;
+    }
+
+    public boolean overlaps(String otherDate, LocalTime otherStart, LocalTime otherEnd, int bufferMinutes) {
+        if (!this.date.equals(otherDate))
+            return false;
+
+        LocalTime requestedStartBuffered = otherStart.minusMinutes(bufferMinutes);
+        LocalTime requestedEndBuffered = otherEnd.plusMinutes(bufferMinutes);
+
+        return startTime.isBefore(requestedEndBuffered) && endTime.isAfter(requestedStartBuffered);
+    }
+
+    @Override
+    public String toString() {
+        return "[" + id + "] " + date + " (" + startTime + " - " + endTime + ") Cap:" + attendees + " | Admin:"
+                + isAdmin + " | Purpose: " + purpose;
+    }
+}
+
+class Room {
+    String name;
+    int capacity;
+    List<Booking> bookings;
+
+    public Room(String name, int capacity) {
+        this.name = name;
+        this.capacity = capacity;
+        this.bookings = new ArrayList<>();
+    }
+}
+
+public class MeetingRoomBooking {
+    private static final int BUFFER_MINUTES = 15;
+    private static final List<Room> rooms = new ArrayList<>();
+    private static final Scanner scanner = new Scanner(System.in);
+
+    public static void main(String[] args) {
+        // Initialize Rooms
+        rooms.add(new Room("Room A (Small)", 5));
+        rooms.add(new Room("Room B (Medium)", 10));
+        rooms.add(new Room("Room C (Large)", 20));
+
+        System.out.println("=== Welcome to the Zoho Meeting Room Booking System ===");
+
+        while (true) {
+            displayMenu();
+            String choice = scanner.nextLine().trim();
+
+            switch (choice) {
+                case "1":
+                    listRooms();
+                    break;
+                case "2":
+                    bookRoom(false);
+                    break;
+                case "3":
+                    cancelBooking();
+                    break;
+                case "4":
+                    checkAvailability();
+                    break;
+                case "5":
+                    listAllBookings();
+                    break;
+                case "6":
+                    System.out.println("Exiting System. Goodbye!");
+                    return;
+                case "admin":
+                    bookRoom(true);
+                    break; // Priority booking trigger
+                default:
+                    System.out.println("Error: Invalid choice.");
+            }
+        }
+    }
+
+    private static void displayMenu() {
+        System.out.println("\n----------------------------------");
+        System.out.println("1. List Rooms and Capacity");
+        System.out.println("2. Book a Meeting Room");
+        System.out.println("3. Cancel Booking");
+        System.out.println("4. Check Room Availability");
+        System.out.println("5. List All Active Bookings");
+        System.out.println("6. Exit");
+        System.out.print("Selection >> ");
+    }
+
+    private static void listRooms() {
+        System.out.println("\nAVAILABLE ROOMS:");
+        rooms.sort(Comparator.comparingInt(r -> r.capacity));
+        for (Room room : rooms) {
+            System.out.printf("- %-15s | Capacity: %2d seats\n", room.name, room.capacity);
+        }
+    }
+
+    private static void bookRoom(boolean isAdmin) {
+        if (isAdmin)
+            System.out.println("\n[ADMIN PRIORITY BOOKING MODE]");
+
+        try {
+            System.out.print("Date (yyyy-MM-dd): ");
+            String dateStr = scanner.nextLine().trim();
+            System.out.print("Start Time (HH:mm): ");
+            LocalTime start = LocalTime.parse(scanner.nextLine().trim());
+            System.out.print("End Time (HH:mm): ");
+            LocalTime end = LocalTime.parse(scanner.nextLine().trim());
+            System.out.print("Attendees: ");
+            int attendees = Integer.parseInt(scanner.nextLine().trim());
+            System.out.print("Purpose of Meeting: ");
+            String purpose = scanner.nextLine().trim();
+            System.out.print("Recurring daily for 7 days? (y/n): ");
+            boolean isRecurring = scanner.nextLine().equalsIgnoreCase("y");
+
+            int days = isRecurring ? 7 : 1;
+            String bookingIdBatch = UUID.randomUUID().toString().substring(0, 5).toUpperCase();
+
+            boolean allSucceeded = true;
+            for (int i = 0; i < days; i++) {
+                // Handle date increment for recurring
+                String currentDate = LocalDateTime.parse(dateStr + "T00:00:00").plusDays(i)
+                        .format(DateTimeFormatter.ISO_LOCAL_DATE);
+                String result = performBooking(bookingIdBatch + (days > 1 ? "-" + (i + 1) : ""), currentDate, start,
+                        end, attendees, purpose, isAdmin);
+                if (result == null) {
+                    System.out.println(">> Failed for date: " + currentDate);
+                    allSucceeded = false;
+                } else {
+                    System.out.println(">> Success! ID: " + result + " | Date: " + currentDate);
+                }
+            }
+            if (allSucceeded)
+                System.out.println("\nAll bookings processed successfully.");
+
+        } catch (Exception e) {
+            System.out.println("Error: Invalid input format. please use yyyy-MM-dd and HH:mm.");
+        }
+    }
+
+    private static String performBooking(String id, String date, LocalTime start, LocalTime end, int attendees,
+            String purpose, boolean isAdmin) {
+        Room bestRoom = null;
+        Booking overrideTarget = null;
+
+        List<Room> sortedRooms = new ArrayList<>(rooms);
+        sortedRooms.sort(Comparator.comparingInt(r -> r.capacity));
+
+        for (Room room : sortedRooms) {
+            if (room.capacity < attendees)
+                continue;
+
+            Booking conflict = null;
+            for (Booking b : room.bookings) {
+                if (b.overlaps(date, start, end, BUFFER_MINUTES)) {
+                    conflict = b;
+                    break;
+                }
+            }
+
+            if (conflict == null) {
+                bestRoom = room;
+                break;
+            } else if (isAdmin && !conflict.isAdmin) {
+                if (bestRoom == null) {
+                    bestRoom = room;
+                    overrideTarget = conflict;
+                }
+            }
+        }
+
+        if (bestRoom != null) {
+            if (overrideTarget != null) {
+                System.out.println("[PRIORITY] Admin overriding booking " + overrideTarget.id + " in " + bestRoom.name);
+                bestRoom.bookings.remove(overrideTarget);
+            }
+            Booking b = new Booking(id, bestRoom.name, date, start, end, attendees, purpose, isAdmin);
+            bestRoom.bookings.add(b);
+            return id + " (" + bestRoom.name + ")";
+        }
+
+        return null;
+    }
+
+    private static void cancelBooking() {
+        System.out.print("Enter Booking ID: ");
+        String id = scanner.nextLine().trim();
+        boolean removed = false;
+
+        for (Room room : rooms) {
+            removed = room.bookings.removeIf(b -> b.id.equalsIgnoreCase(id));
+            if (removed) {
+                System.out.println("Booking [" + id + "] from " + room.name + " cancelled.");
+                break;
+            }
+        }
+        if (!removed)
+            System.out.println("Error: Booking ID not found.");
+    }
+
+    private static void checkAvailability() {
+        try {
+            System.out.print("Date (yyyy-MM-dd): ");
+            String date = scanner.nextLine().trim();
+            System.out.print("Start Time (HH:mm): ");
+            LocalTime start = LocalTime.parse(scanner.nextLine().trim());
+            System.out.print("End Time (HH:mm): ");
+            LocalTime end = LocalTime.parse(scanner.nextLine().trim());
+            System.out.print("Min Capacity Needed: ");
+            int minCap = Integer.parseInt(scanner.nextLine().trim());
+
+            System.out.println("\nAVAILABLE ROOMS FOR THE GIVEN SLOT (After 15m Buffer Check):");
+            boolean found = false;
+            for (Room room : rooms) {
+                if (room.capacity < minCap)
+                    continue;
+
+                boolean hasConflict = false;
+                for (Booking b : room.bookings) {
+                    if (b.overlaps(date, start, end, BUFFER_MINUTES)) {
+                        hasConflict = true;
+                        break;
+                    }
+                }
+
+                if (!hasConflict) {
+                    System.out.printf("- %-15s (Cap: %d)\n", room.name, room.capacity);
+                    found = true;
+                }
+            }
+            if (!found)
+                System.out.println("No rooms available for the selected criteria.");
+
+        } catch (Exception e) {
+            System.out.println("Error: Invalid input format.");
+        }
+    }
+
+    private static void listAllBookings() {
+        System.out.println("\nCURRENT RESERVATIONS:");
+        boolean empty = true;
+        for (Room room : rooms) {
+            for (Booking b : room.bookings) {
+                System.out.println(room.name + " -> " + b);
+                empty = false;
+            }
+        }
+        if (empty)
+            System.out.println("No active bookings in the system.");
+    }
+}
